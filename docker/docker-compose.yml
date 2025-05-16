@@ -1,0 +1,196 @@
+version: '3.8'
+
+services:
+  # Zookeeper cho Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.2
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - crawler_network
+
+  # Kafka cho message queue
+  kafka:
+    image: confluentinc/cp-kafka:7.3.2
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "19092:19092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    networks:
+      - crawler_network
+
+  # Kafka UI
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - crawler_network
+
+  # List Crawler Service - Batdongsan
+  list-crawler-batdongsan:
+    build:
+      context: ../
+      dockerfile: crawler/Dockerfile
+    image: realestate/crawler:latest
+    container_name: list-crawler-batdongsan
+    depends_on:
+      - kafka
+    environment:
+      - SERVICE_TYPE=list_crawler
+      - SOURCE=batdongsan
+      - CRAWLER_TYPE=playwright
+      - MAX_CONCURRENT=2
+      - BATCH_SIZE=20
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - OUTPUT_TOPIC=property-urls
+    volumes:
+      - ../crawler:/app/crawler
+      - list_crawler_data:/app/data
+      - list_crawler_checkpoint:/app/crawler/checkpoint
+    networks:
+      - crawler_network
+
+  # List Crawler Service - Chotot
+  list-crawler-chotot:
+    build:
+      context: ../
+      dockerfile: crawler/Dockerfile
+    image: realestate/crawler:latest
+    container_name: list-crawler-chotot
+    depends_on:
+      - kafka
+    environment:
+      - SERVICE_TYPE=list_crawler
+      - SOURCE=chotot
+      - CRAWLER_TYPE=api
+      - MAX_CONCURRENT=5
+      - BATCH_SIZE=50
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - OUTPUT_TOPIC=property-urls
+    volumes:
+      - ../crawler:/app/crawler
+      - chotot_crawler_data:/app/data
+      - chotot_crawler_checkpoint:/app/crawler/checkpoint
+    networks:
+      - crawler_network
+
+  # Detail Crawler Service - Batdongsan
+  detail-crawler-batdongsan:
+    build:
+      context: ../
+      dockerfile: crawler/Dockerfile
+    image: realestate/crawler:latest
+    container_name: detail-crawler-batdongsan
+    depends_on:
+      - kafka
+    environment:
+      - SERVICE_TYPE=detail_crawler
+      - SOURCE=batdongsan
+      - CRAWLER_TYPE=default
+      - MAX_CONCURRENT=3
+      - BATCH_SIZE=30
+      - RETRY_LIMIT=3
+      - RETRY_DELAY=5
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - INPUT_TOPIC=property-urls
+      - OUTPUT_TOPIC=property-data
+    volumes:
+      - ../crawler:/app/crawler
+      - detail_crawler_data:/app/data
+      - detail_crawler_checkpoint:/app/crawler/checkpoint
+    networks:
+      - crawler_network
+
+  # Detail Crawler Service - Chotot
+  detail-crawler-chotot:
+    build:
+      context: ../
+      dockerfile: crawler/Dockerfile
+    image: realestate/crawler:latest
+    container_name: detail-crawler-chotot
+    depends_on:
+      - kafka
+    environment:
+      - SERVICE_TYPE=detail_crawler
+      - SOURCE=chotot
+      - CRAWLER_TYPE=default
+      - MAX_CONCURRENT=5
+      - BATCH_SIZE=50
+      - RETRY_LIMIT=3
+      - RETRY_DELAY=5
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - INPUT_TOPIC=property-urls
+      - OUTPUT_TOPIC=property-data
+    volumes:
+      - ../crawler:/app/crawler
+      - chotot_detail_data:/app/data
+      - chotot_detail_checkpoint:/app/crawler/checkpoint
+    networks:
+      - crawler_network
+
+  # HDFS Storage Service
+  hdfs-storage-service:
+    build:
+      context: ../
+      dockerfile: crawler/Dockerfile
+    image: realestate/crawler:latest
+    container_name: hdfs-storage-service
+    depends_on:
+      - kafka
+    environment:
+      - SERVICE_TYPE=storage_service
+      - STORAGE_TYPE=hdfs
+      - HDFS_NAMENODE=namenode:9870
+      - HDFS_USER=airflow
+      - HDFS_BASE_PATH=/data/realestate
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - INPUT_TOPIC=property-data
+      - BATCH_SIZE=100
+      - FLUSH_INTERVAL=300
+    volumes:
+      - ../crawler:/app/crawler
+      - storage_data:/app/data
+    networks:
+      - crawler_network
+      - hadoop_network
+
+volumes:
+  list_crawler_data:
+  list_crawler_checkpoint:
+  chotot_crawler_data:
+  chotot_crawler_checkpoint:
+  detail_crawler_data:
+  detail_crawler_checkpoint:
+  chotot_detail_data:
+  chotot_detail_checkpoint:
+  storage_data:
+
+networks:
+  crawler_network:
+    driver: bridge
+  hadoop_network:
+    external: true

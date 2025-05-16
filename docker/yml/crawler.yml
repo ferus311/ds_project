@@ -1,0 +1,81 @@
+x-crawler-common: &crawler-common
+    build:
+        context: ../../crawler
+    restart: unless-stopped
+    networks:
+        - kafka_network
+        - hdfs_network
+    volumes:
+        - ../../crawler:/app
+
+services:
+    # URL Crawler Service - Thu thập URL và đẩy vào queue
+    list-crawler-service:
+        <<: *crawler-common
+        container_name: list-crawler
+        command: ['python', '-m', 'services.list_crawler.main']
+        environment:
+            - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+            - HDFS_NAMENODE=namenode:9000
+            - SOURCE=batdongsan
+            - CRAWLER_TYPE=playwright
+            - MAX_CONCURRENT=5
+
+    # Detail Crawler Service - Xử lý chi tiết từ các URL
+    detail-crawler-service:
+        <<: *crawler-common
+        container_name: detail-crawler
+        command: ['python', '-m', 'services.detail_crawler.main']
+        environment:
+            - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+            - HDFS_NAMENODE=namenode:9000
+            - MAX_CONCURRENT=10
+            - MAX_RETRIES=3
+
+    # API Crawler Service - Thu thập nhanh thông qua API
+    api-crawler-service:
+        <<: *crawler-common
+        container_name: api-crawler
+        command: ['python', '-m', 'services.api_crawler.main']
+        environment:
+            - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+            - HDFS_NAMENODE=namenode:9000
+            - SOURCE=chotot
+            - MAX_CONCURRENT=20
+            - START_PAGE=1
+            - END_PAGE=10
+            - INTERVAL=3600
+
+    # Storage Service - Lưu trữ dữ liệu vào HDFS
+    storage-service:
+        <<: *crawler-common
+        container_name: storage-service
+        command: ['python', '-m', 'services.storage_service.main']
+        environment:
+            - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+            - HDFS_NAMENODE=namenode:9000
+            - BATCH_SIZE=100
+            - FLUSH_INTERVAL=300
+
+    # Retry Service - Xử lý các URL thất bại
+    retry-service:
+        <<: *crawler-common
+        container_name: retry-service
+        command: ['python', '-m', 'services.retry_service.main']
+        environment:
+            - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+            - MAX_RETRIES=3
+            - RETRY_DELAY=3600
+
+    # Dev Shell Service - Cho phép truy cập shell để chạy lệnh thủ công
+    crawler-shell:
+        <<: *crawler-common
+        container_name: crawler-shell
+        entrypoint: ['/bin/bash']
+        tty: true
+
+networks:
+    kafka_network:
+        external: true
+    hdfs_network:
+        external: true

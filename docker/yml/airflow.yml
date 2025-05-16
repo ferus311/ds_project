@@ -1,0 +1,70 @@
+x-airflow-common: &airflow-common
+    image: apache/airflow:2.8.1
+    environment:
+        AIRFLOW__CORE__EXECUTOR: LocalExecutor
+        AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+        AIRFLOW__CORE__FERNET_KEY: ''
+        AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+        AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    volumes:
+        - ../../data_processing/airflow/dags:/opt/airflow/dags
+        - ../../data_processing/airflow/logs:/opt/airflow/logs
+        - ../../data_processing/airflow/plugins:/opt/airflow/plugins
+        - ../../crawler:/opt/airflow/crawler
+        - ../../data_processing:/opt/airflow/data_processing
+        - /var/run/docker.sock:/var/run/docker.sock
+    user: '${AIRFLOW_UID}:0'
+
+services:
+    postgres:
+        image: postgres:13
+        container_name: airflow-postgres
+        restart: always
+        environment:
+            POSTGRES_USER: airflow
+            POSTGRES_PASSWORD: airflow
+            POSTGRES_DB: airflow
+        volumes:
+            - airflow_postgres_data:/var/lib/postgresql/data
+
+    airflow-init:
+        <<: *airflow-common
+        container_name: airflow-init
+        entrypoint: bash
+        command:
+            - -c
+            - |
+                mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/data
+                chmod -R 777 /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/data
+                airflow db init && \
+                airflow db migrate && \
+                airflow users create \
+                  --username admin \
+                  --firstname Admin \
+                  --lastname User \
+                  --role Admin \
+                  --email admin@example.com \
+                  --password admin
+        depends_on:
+            - postgres
+
+    airflow-webserver:
+        <<: *airflow-common
+        container_name: airflow-web
+        restart: always
+        ports:
+            - '8080:8080'
+        command: webserver
+        depends_on:
+            - postgres
+
+    airflow-scheduler:
+        <<: *airflow-common
+        container_name: airflow-scheduler
+        restart: always
+        command: scheduler
+        depends_on:
+            - postgres
+
+volumes:
+    airflow_postgres_data:
